@@ -852,6 +852,28 @@ uint32_t imaevm_read_keyid(const char *certfile)
 	return ntohl(keyid_be);
 }
 
+/**
+ * read_keyid_from_key() - Read 32-bit keyid from the key file
+ * @keyid_be:   Pointer to 32-bit value in network order (BE, unaligned).
+ * @keyfile:    PEM file with private key with optionally appended x509 cert.
+ * Return:      0 on success and keyid_be is written;
+ *              -1 on error, logged error message, and keyid_be isn't written.
+ */
+static int read_keyid_from_key(uint32_t *keyid_be, const char *keyfile)
+{
+	X509 *x;
+
+	/* false: to try to read optional PEM cert. */
+	if (!(x = read_cert(keyfile, false)))
+		return -1;
+	if (extract_keyid(keyid_be, x, keyfile)) {
+		X509_free(x);
+		return -1;
+	}
+	X509_free(x);
+	return 0;
+}
+
 static EVP_PKEY *read_priv_pkey(const char *keyfile, const char *keypass)
 {
 	FILE *fp;
@@ -1036,10 +1058,14 @@ static int sign_hash_v2(const char *algo, const unsigned char *hash,
 		return -1;
 	}
 
-	if (imaevm_params.keyid)
+	if (imaevm_params.keyid) {
 		hdr->keyid = htonl(imaevm_params.keyid);
-	else
-		calc_keyid_v2(&hdr->keyid, name, pkey);
+	} else {
+		int keyid_read_failed = read_keyid_from_key(&hdr->keyid, keyfile);
+
+		if (keyid_read_failed)
+			calc_keyid_v2(&hdr->keyid, name, pkey);
+	}
 
 	st = "EVP_PKEY_CTX_new";
 	if (!(ctx = EVP_PKEY_CTX_new(pkey, NULL)))
